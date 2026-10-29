@@ -113,6 +113,8 @@ export async function ingestDocument(
   if (existing) {
     if (existing.status === 'indexed') {
       return existing;
+    } else if (existing.status === 'processing') {
+      return existing;
     } else if (existing.status === 'error') {
       // Remove failed doc record to allow re-ingestion
       await documentsCollection.deleteOne({ id: existing.id });

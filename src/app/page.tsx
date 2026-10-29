@@ -197,45 +197,47 @@ export default function StudyCompanionApp() {
     }
   }
 
-  async function uploadFile(file: File) {
-    const name = file.name.toLowerCase();
-    if (!name.endsWith('.pdf') && !name.endsWith('.txt')) {
-      setUploadError('Only PDF and TXT files are supported.');
-      return;
+  async function uploadFiles(files: FileList | File[]) {
+    const list = Array.from(files);
+    const valid = list.filter((f) => /\.(pdf|txt)$/i.test(f.name));
+
+    if (valid.length < list.length) {
+      setUploadError('Some files were skipped. Only PDF and TXT are supported.');
     }
+    if (valid.length === 0) return;
 
     setUploading(true);
-    setUploadError('');
+    const failures: string[] = [];
 
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Upload failed');
+    // Sequential on purpose: your ingestion embeds chunk-by-chunk, and
+    // parallel uploads can hit Gemini rate limits.
+    for (const file of valid) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Upload failed');
+      } catch (err) {
+        failures.push(`${file.name}: ${(err as Error).message}`);
       }
-      await fetchDocuments();
-      setActiveTab('library');
-    } catch (err) {
-      setUploadError((err as Error).message);
-    } finally {
-      setUploading(false);
     }
+
+    await fetchDocuments();
+    setUploading(false);
+    if (failures.length) setUploadError(failures.join(' | '));
+    else setActiveTab('library');
   }
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) uploadFile(file);
+    if (e.target.files?.length) uploadFiles(e.target.files);
     e.target.value = '';
   }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     setDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) uploadFile(file);
+    if (e.dataTransfer.files?.length) uploadFiles(e.dataTransfer.files);
   }
 
   async function handleDeleteDoc(id: string) {
@@ -365,7 +367,7 @@ export default function StudyCompanionApp() {
     >
       {uploading && <Spinner />}
       <span>{uploading ? 'Uploading…' : 'Upload file'}</span>
-      <input type="file" accept=".pdf,.txt" onChange={handleFileInput} disabled={uploading} className="sr-only" />
+      <input type="file" accept=".pdf,.txt" multiple onChange={handleFileInput} disabled={uploading} className="sr-only" />
     </label>
   );
 
