@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { DocumentRecord, Citation, Flashcard, QuizQuestion, QuizResult } from '../types';
+import { formatTimestamp } from '../services/video';
 
 type Tab = 'chat' | 'library' | 'summaries' | 'flashcards' | 'quizzes';
 
@@ -14,7 +15,7 @@ type ChatMessage = {
 
 const TABS: { id: Tab; label: string; title: string; blurb: string }[] = [
   { id: 'chat', label: 'Ask', title: 'Ask your documents', blurb: 'Answers come only from your uploaded material, with the passage they were found in.' },
-  { id: 'library', label: 'Library', title: 'Library', blurb: 'Upload PDF or TXT files and choose which ones to search.' },
+  { id: 'library', label: 'Library', title: 'Library', blurb: 'Upload PDF, TXT or video subtitle files and choose which ones to search.' },
   { id: 'summaries', label: 'Summary', title: 'Summary', blurb: 'A short overview and the main points from your selected documents.' },
   { id: 'flashcards', label: 'Flashcards', title: 'Flashcards', blurb: 'Definitions and concepts to review. Use the arrow keys to move between cards.' },
   { id: 'quizzes', label: 'Quiz', title: 'Quiz', blurb: 'Multiple-choice questions based on your documents, graded with explanations.' },
@@ -199,10 +200,10 @@ export default function StudyCompanionApp() {
 
   async function uploadFiles(files: FileList | File[]) {
     const list = Array.from(files);
-    const valid = list.filter((f) => /\.(pdf|txt)$/i.test(f.name));
+    const valid = list.filter((f) => /\.(pdf|txt|vtt|srt)$/i.test(f.name));
 
     if (valid.length < list.length) {
-      setUploadError('Some files were skipped. Only PDF and TXT are supported.');
+      setUploadError('Some files were skipped. Supported types: PDF, TXT, VTT and SRT.');
     }
     if (valid.length === 0) return;
 
@@ -367,7 +368,7 @@ export default function StudyCompanionApp() {
     >
       {uploading && <Spinner />}
       <span>{uploading ? 'Uploading…' : 'Upload file'}</span>
-      <input type="file" accept=".pdf,.txt" multiple onChange={handleFileInput} disabled={uploading} className="sr-only" />
+      <input type="file" accept=".pdf,.txt,.vtt,.srt" multiple onChange={handleFileInput} disabled={uploading} className="sr-only" />
     </label>
   );
 
@@ -583,7 +584,7 @@ export default function StudyCompanionApp() {
                   dragging ? 'border-emerald-800 bg-emerald-50 text-emerald-900' : 'border-zinc-300 bg-white text-zinc-600'
                 }`}
               >
-                {uploading ? 'Uploading and indexing…' : 'Drop a PDF or TXT file here, or use the Upload file button.'}
+                {uploading ? 'Uploading and indexing…' : 'Drop a PDF, TXT, VTT or SRT file here, or use the Upload file button.'}
               </div>
 
               {noDocs ? (

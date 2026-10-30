@@ -4,10 +4,13 @@ export interface DocumentRecord {
   filename: string;
   fileSize: number;
   mimeType: string;
-  status: 'processing' | 'indexed' | 'error';
+  status: 'processing' | 'indexed' | 'error' | 'ready' | 'failed';
   errorMessage?: string;
   chunkCount: number;
   createdAt: Date;
+  sourceType: "pdf" | "txt" | "video";
+  videoUrl?: string;      // YouTube link, if any
+  videoFilePath?: string; // local file, if uploaded
 }
 
 export interface ChunkRecord {
@@ -20,6 +23,8 @@ export interface ChunkRecord {
   content: string;
   embedding: number[];
   createdAt: Date;
+  startSeconds?: number;
+  endSeconds?: number;
 }
 
 export interface Citation {
@@ -29,6 +34,8 @@ export interface Citation {
   pageNumber?: number;
   passageSnippet: string;
   score?: number;
+  startSeconds?: number;
+  endSeconds?: number;
 }
 
 export interface RAGAnswer {
@@ -72,4 +79,10 @@ export interface QuizResult {
     explanation: string;
     citation: Citation;
   }[];
+}
+
+export interface TranscriptSegment {
+  start: number; // seconds
+  end: number;   // seconds
+  text: string;
 }

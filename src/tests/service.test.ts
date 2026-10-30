@@ -1,6 +1,31 @@
 import { chunkText, extractTextFromFile } from '../services/ingestion';
 import { gradeQuiz } from '../services/study';
 import { QuizQuestion } from '../types';
+import { formatTimestamp, parseTimestamp, chunkSegments } from "@/services/video";
+
+describe("video helpers", () => {
+  test("formatTimestamp", () => {
+    expect(formatTimestamp(754)).toBe("12:34");
+    expect(formatTimestamp(3723)).toBe("1:02:03");
+  });
+
+  test("parseTimestamp", () => {
+    expect(parseTimestamp("12:34")).toBe(754);
+    expect(parseTimestamp("1:02:03")).toBe(3723);
+  });
+
+  test("chunkSegments keeps start times and overlaps", () => {
+    const segs = Array.from({ length: 20 }, (_, k) => ({
+      start: k * 10,
+      end: k * 10 + 10,
+      text: `sentence ${k}`,
+    }));
+    const chunks = chunkSegments(segs, 60, 10);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[0].startSeconds).toBe(0);
+    expect(chunks[1].startSeconds).toBeLessThan(chunks[0].endSeconds); // overlap
+  });
+});
 
 describe('RAG Study Companion Core Services Unit Tests', () => {
   test('chunkText splits long text with overlap correctly', () => {

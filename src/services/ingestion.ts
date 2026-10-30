@@ -3,6 +3,52 @@ import { connectToDatabase } from './db';
 import { generateEmbeddings } from './gemini';
 import { DocumentRecord, ChunkRecord } from '../types';
 import { ObjectId } from 'mongodb';
+import { chunkSegments } from './video';
+import { TranscriptSegment } from '../types';
+
+type PendingChunk = {
+  content: string;
+  chunkIndex: number;
+  pageNumber?: number;
+  startSeconds?: number;
+  endSeconds?: number;
+};
+
+async function embedAndStoreChunks(
+  docId: string,
+  filename: string,
+  chunks: PendingChunk[]
+): Promise<number> {
+  const { db } = await connectToDatabase();
+  const chunksCollection = db.collection<ChunkRecord>('chunks');
+
+  const chunkRecords: ChunkRecord[] = [];
+  for (const chunk of chunks) {
+    const embedding = await generateEmbeddings(chunk.content);
+    if (!embedding || embedding.length !== 768) {
+      throw new Error(
+        `Generated embedding has incorrect dimensions: expected 768, got ${embedding?.length}`
+      );
+    }
+    chunkRecords.push({
+      id: new ObjectId().toString(),
+      documentId: docId,
+      filename,
+      pageNumber: chunk.pageNumber,
+      startSeconds: chunk.startSeconds,
+      endSeconds: chunk.endSeconds,
+      chunkIndex: chunk.chunkIndex,
+      content: chunk.content,
+      embedding,
+      createdAt: new Date(),
+    });
+  }
+
+  if (chunkRecords.length > 0) {
+    await chunksCollection.insertMany(chunkRecords);
+  }
+  return chunkRecords.length;
+}
 
 export function chunkText(
   text: string,
@@ -106,16 +152,14 @@ export async function ingestDocument(
 ): Promise<DocumentRecord> {
   const { db } = await connectToDatabase();
   const documentsCollection = db.collection<DocumentRecord>('documents');
-  const chunksCollection = db.collection<ChunkRecord>('chunks');
 
   // Check duplicate by filename and size
   const existing = await documentsCollection.findOne({ filename, fileSize: buffer.length });
   if (existing) {
-    if (existing.status === 'indexed') {
+    if (existing.status === 'indexed' || existing.status === 'processing') {
       return existing;
-    } else if (existing.status === 'processing') {
-      return existing;
-    } else if (existing.status === 'error') {
+    }
+    if (existing.status === 'error') {
       // Remove failed doc record to allow re-ingestion
       await documentsCollection.deleteOne({ id: existing.id });
     }
@@ -130,13 +174,14 @@ export async function ingestDocument(
     status: 'processing',
     chunkCount: 0,
     createdAt: new Date(),
+    sourceType: mimeType === 'application/pdf' ? 'pdf' : 'txt',
   };
 
   await documentsCollection.insertOne(newDoc);
 
   try {
     const extractedPages = await extractTextFromFile(buffer, mimeType, filename);
-    let allChunks: { content: string; chunkIndex: number; pageNumber?: number }[] = [];
+    const allChunks: PendingChunk[] = [];
 
     let globalChunkIdx = 0;
     for (const page of extractedPages) {
@@ -154,35 +199,15 @@ export async function ingestDocument(
       throw new Error('No text content could be extracted from the document.');
     }
 
-    const chunkRecords: ChunkRecord[] = [];
-    for (const chunk of allChunks) {
-      const embedding = await generateEmbeddings(chunk.content);
-      if (!embedding || embedding.length !== 768) {
-        throw new Error(`Generated embedding has incorrect dimensions: expected 768, got ${embedding?.length}`);
-      }
-      chunkRecords.push({
-        id: new ObjectId().toString(),
-        documentId: docId,
-        filename,
-        pageNumber: chunk.pageNumber,
-        chunkIndex: chunk.chunkIndex,
-        content: chunk.content,
-        embedding,
-        createdAt: new Date(),
-      });
-    }
-
-    if (chunkRecords.length > 0) {
-      await chunksCollection.insertMany(chunkRecords);
-    }
+    const count = await embedAndStoreChunks(docId, filename, allChunks);
 
     await documentsCollection.updateOne(
       { id: docId },
-      { $set: { status: 'indexed', chunkCount: chunkRecords.length } }
+      { $set: { status: 'indexed', chunkCount: count } }
     );
 
     newDoc.status = 'indexed';
-    newDoc.chunkCount = chunkRecords.length;
+    newDoc.chunkCount = count;
     return newDoc;
   } catch (error) {
     await documentsCollection.updateOne(
@@ -201,4 +226,65 @@ export async function deleteDocument(documentId: string): Promise<boolean> {
   await chunksCollection.deleteMany({ documentId });
   const result = await documentsCollection.deleteOne({ id: documentId });
   return result.deletedCount ? result.deletedCount > 0 : false;
+}
+
+export async function createVideoDocument(params: {
+  filename: string;
+  fileSize: number;
+  mimeType: string;
+  videoUrl?: string;
+  videoFilePath?: string;
+}): Promise<DocumentRecord> {
+  const { db } = await connectToDatabase();
+  const documentsCollection = db.collection<DocumentRecord>('documents');
+
+  const doc: DocumentRecord = {
+    id: new ObjectId().toString(),
+    filename: params.filename,
+    fileSize: params.fileSize,
+    mimeType: params.mimeType,
+    status: 'processing',
+    chunkCount: 0,
+    createdAt: new Date(),
+    sourceType: 'video',
+    videoUrl: params.videoUrl,
+    videoFilePath: params.videoFilePath,
+  };
+  await documentsCollection.insertOne(doc);
+  return doc;
+}
+
+export async function ingestVideoSegments(
+  docId: string,
+  filename: string,
+  segments: TranscriptSegment[]
+): Promise<void> {
+  const { db } = await connectToDatabase();
+  const documentsCollection = db.collection<DocumentRecord>('documents');
+
+  try {
+    const videoChunks = chunkSegments(segments);
+    if (videoChunks.length === 0) {
+      throw new Error('The transcript is empty, so there is nothing to index.');
+    }
+
+    const pending: PendingChunk[] = videoChunks.map((c, i) => ({
+      content: c.text,
+      chunkIndex: i,
+      startSeconds: c.startSeconds,
+      endSeconds: c.endSeconds,
+    }));
+
+    const count = await embedAndStoreChunks(docId, filename, pending);
+    await documentsCollection.updateOne(
+      { id: docId },
+      { $set: { status: 'indexed', chunkCount: count } }
+    );
+  } catch (error) {
+    await documentsCollection.updateOne(
+      { id: docId },
+      { $set: { status: 'error', errorMessage: (error as Error).message } }
+    );
+    throw error;
+  }
 }
