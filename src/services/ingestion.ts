@@ -1,4 +1,4 @@
-import pdfParse from 'pdf-parse';
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { connectToDatabase } from './db';
 import { generateEmbeddings } from './gemini';
 import { DocumentRecord, ChunkRecord } from '../types';
